@@ -169,6 +169,7 @@ td small { margin-top: 4px; color: var(--secondary); font-size: 10px; }
 .rail-label { display: block; text-align: center; color: var(--secondary); font-size: 10px; text-transform: uppercase; letter-spacing: .7px; margin-bottom: 10px; }
 .page-thumb { width: 100%; border: 1px solid transparent; background: transparent; padding: 5px; margin-bottom: 10px; border-radius: 4px; }
 .page-thumb.active { background: var(--blue-100); border-color: var(--primary); }
+.page-thumb > img { display: block; width: 100%; aspect-ratio: 1.414 / 1; object-fit: contain; background: var(--surface); border: 1px solid var(--border); }
 .mini-page { height: 78px; background: var(--surface); border: 1px solid var(--border); padding: 9px 6px; display: grid; gap: 5px; }
 .mini-page i { display: block; height: 8px; border: 1px solid var(--border); }
 .mini-page i:first-child { height: 20px; background: var(--off-white); }
@@ -182,6 +183,18 @@ td small { margin-top: 4px; color: var(--secondary); font-size: 10px; }
 .stage-toolbar div span { padding: 0 10px; border-inline: 1px solid var(--border); }
 .stage-toolbar > button { border: 0; color: var(--primary); background: transparent; }
 .document-canvas { flex: 1; overflow: auto; padding: 28px; display: grid; place-items: start center; }
+.real-pdf-page { position: relative; width: min(920px, 100%); background: var(--surface); border: 1px solid var(--border); box-shadow: 0 4px 8px rgba(0,0,0,.1); overflow: visible; }
+.real-pdf-page > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.pdf-coordinate-marker { position: absolute; z-index: 8; min-width: 9px; min-height: 9px; padding: 0; border: 1.5px solid; background: transparent; border-radius: 2px; }
+.pdf-coordinate-marker.needs-review { border-color: rgba(199,0,11,.82); background: rgba(199,0,11,.08); }
+.pdf-coordinate-marker.confirmed { border-color: rgba(0,107,60,.65); background: rgba(0,107,60,.04); }
+.pdf-coordinate-marker:hover, .pdf-coordinate-marker.selected { z-index: 12; outline: 2px solid var(--blue-500); outline-offset: 1px; background: rgba(15,98,254,.12); }
+.pdf-coordinate-marker > span { position: absolute; left: -1px; top: -15px; display: none; min-width: 16px; height: 14px; padding: 0 3px; place-items: center; border-radius: 2px 2px 0 0; color: var(--surface); background: var(--blue-700); font-size: 7px; line-height: 14px; font-weight: 600; }
+.pdf-coordinate-marker:hover > span, .pdf-coordinate-marker.selected > span { display: grid; }
+.page-ocr-notice { position: absolute; inset: auto 18px 18px auto; max-width: 270px; padding: 12px 14px; background: rgba(255,243,224,.96); border-left: 4px solid var(--warning); box-shadow: 0 3px 10px rgba(0,0,0,.12); }
+.page-ocr-notice strong, .page-ocr-notice span { display: block; }
+.page-ocr-notice strong { color: var(--heading); font-size: 12px; }
+.page-ocr-notice span { margin-top: 4px; color: var(--body); font-size: 9px; line-height: 1.5; }
 .spec-page { position: relative; width: min(760px, 100%); aspect-ratio: 1.414 / 1; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 4px 8px rgba(0,0,0,.1); color: var(--heading); font-family: Arial, "PingFang SC", sans-serif; }
 .spec-brand { height: 12%; border-bottom: 2px solid var(--heading); padding: 3% 4% 1%; display: flex; justify-content: space-between; align-items: flex-start; }
 .spec-brand strong { font-size: clamp(10px, 1.5vw, 20px); letter-spacing: 4px; }
@@ -231,6 +244,7 @@ td small { margin-top: 4px; color: var(--secondary); font-size: 10px; }
 .filter-tabs button.active::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; background: var(--primary); }
 .filter-tabs b { margin-left: 3px; }
 .block-list { max-height: 230px; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.empty-blocks { padding: 24px 16px; color: var(--secondary); text-align: center; font-size: 10px; }
 .block-list > button { width: 100%; border: 0; border-bottom: 1px solid var(--surface-variant); background: var(--surface); display: grid; grid-template-columns: 28px 1fr auto; gap: 9px; padding: 11px 14px; text-align: left; }
 .block-list > button:hover, .block-list > button.selected { background: var(--blue-100); }
 .block-list > button.selected { box-shadow: inset 3px 0 0 var(--primary); }

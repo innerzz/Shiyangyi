@@ -166,6 +166,23 @@ def _font_path() -> Optional[str]:
     return next((path for path in candidates if path and Path(path).exists()), None)
 
 
+def render_page_preview(
+    source_path: Path, output_path: Path, page_number: int, dpi: int = 128
+) -> Path:
+    document = fitz.open(source_path)
+    try:
+        if page_number < 1 or page_number > len(document):
+            raise ValueError("页码超出PDF范围")
+        page = document[page_number - 1]
+        scale = dpi / 72
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pixmap.save(output_path)
+        return output_path
+    finally:
+        document.close()
+
+
 def export_pdf(
     source_path: Path,
     output_path: Path,

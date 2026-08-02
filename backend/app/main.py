@@ -8,13 +8,13 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .glossary import Glossary
 from .models import AnalyzeResponse, ExportRequest, TranslationBlock
-from .pdf_service import analyze_pdf, export_pdf, ocr_available
+from .pdf_service import analyze_pdf, export_pdf, ocr_available, render_page_preview
 from .providers import provider_from_environment
 
 
@@ -45,6 +45,8 @@ def _default_glossary() -> Optional[Path]:
 
 
 def _load_task(task_id: str):
+    if not re.fullmatch(r"[a-f0-9]{16}", task_id):
+        raise HTTPException(status_code=404, detail="任务不存在或已清理")
     folder = TASK_ROOT / task_id
     metadata_path = folder / "task.json"
     source_path = folder / "source.pdf"
@@ -122,6 +124,29 @@ def create_task(
     metadata = response.model_dump()
     (folder / "task.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     return response
+
+
+@app.get("/api/tasks/{task_id}/pages/{page_number}/preview")
+def preview_page(
+    task_id: str,
+    page_number: int,
+    dpi: int = Query(128, ge=72, le=180),
+):
+    folder, source_path, metadata = _load_task(task_id)
+    page_count = len(metadata.get("pages", []))
+    if page_number < 1 or page_number > page_count:
+        raise HTTPException(status_code=404, detail="页码不存在")
+    output_path = folder / f"preview-{page_number}-{dpi}.png"
+    if not output_path.is_file():
+        try:
+            render_page_preview(source_path, output_path, page_number, dpi)
+        except Exception as error:
+            raise HTTPException(status_code=422, detail=f"页面预览生成失败：{error}") from error
+    return FileResponse(
+        output_path,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @app.post("/api/tasks/{task_id}/export")

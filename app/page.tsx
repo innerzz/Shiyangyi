@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- PDF previews are dynamic task assets served by the processing API. */
+
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Screen = "dashboard" | "processing" | "review" | "glossary";
@@ -17,6 +19,15 @@ type TranslationBlock = {
   position: string;
   page?: number;
   source?: string;
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
+};
+
+type PdfPage = {
+  page: number;
+  width: number;
+  height: number;
+  extraction: string;
+  warning?: string;
 };
 
 type AnalyzeResponse = {
@@ -24,7 +35,7 @@ type AnalyzeResponse = {
   filename: string;
   provider: string;
   ocr_available: boolean;
-  pages: Array<{ page: number; extraction: string; warning?: string }>;
+  pages: PdfPage[];
   blocks: Array<{
     id: string;
     page: number;
@@ -34,11 +45,16 @@ type AnalyzeResponse = {
     status: BlockStatus;
     source: string;
     matched_terms: string[];
+    bbox: { x0: number; y0: number; x1: number; y1: number };
   }>;
 };
 
 const PROCESSING_API_BASE = (process.env.NEXT_PUBLIC_PROCESSING_API_BASE ?? "").replace(/\/$/, "");
 const markerPositions = ["mark-a", "mark-b", "mark-c", "mark-d", "mark-e", "mark-f", "mark-g", "mark-h"];
+const demoPages: PdfPage[] = [
+  { page: 1, width: 841.89, height: 595.28, extraction: "demo" },
+  { page: 2, width: 841.89, height: 595.28, extraction: "demo" },
+];
 
 const initialBlocks: TranslationBlock[] = [
   { id: 1, marker: "A", original: "生地① CVC裏起毛", translation: "面料① CVC抓绒", confidence: 98, status: "confirmed", glossary: true, position: "mark-a" },
@@ -81,7 +97,8 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [glossarySearch, setGlossarySearch] = useState("");
   const [taskId, setTaskId] = useState("");
-  const [pageCount, setPageCount] = useState(2);
+  const [pages, setPages] = useState<PdfPage[]>(demoPages);
+  const [activePage, setActivePage] = useState(1);
   const [providerName, setProviderName] = useState("演示数据");
   const [ocrReady, setOcrReady] = useState(false);
   const [processingMode, setProcessingMode] = useState<"demo" | "real">("demo");
@@ -145,10 +162,16 @@ export default function Home() {
     setProgress(0);
     setActiveStep(0);
     setTaskId("");
+    setPages(demoPages);
+    setActivePage(1);
     const realMode = Boolean(PROCESSING_API_BASE);
     setProcessingMode(realMode ? "real" : "demo");
     setScreen("processing");
-    if (!realMode) return;
+    if (!realMode) {
+      setBlocks(initialBlocks);
+      setSelectedId(2);
+      return;
+    }
 
     const form = new FormData();
     form.append("pdf", file);
@@ -170,6 +193,7 @@ export default function Home() {
         position: markerPositions[index % markerPositions.length],
         page: block.page,
         source: block.source,
+        bbox: block.bbox,
       }));
       payload.pages.filter((page) => page.extraction === "ocr-required").forEach((page) => {
         realBlocks.push({
@@ -188,7 +212,8 @@ export default function Home() {
       setBlocks(realBlocks.length ? realBlocks : initialBlocks);
       setSelectedId(realBlocks.find((block) => block.status === "review")?.id ?? realBlocks[0]?.id ?? 1);
       setTaskId(payload.task_id);
-      setPageCount(payload.pages.length);
+      setPages(payload.pages);
+      setActivePage(1);
       setProviderName(payload.provider);
       setOcrReady(payload.ocr_available);
       setProgress(100);
@@ -203,6 +228,19 @@ export default function Home() {
 
   function updateTranslation(value: string) {
     setBlocks((current) => current.map((block) => block.id === selectedId ? { ...block, translation: value } : block));
+  }
+
+  function selectBlock(id: number) {
+    const block = blocks.find((item) => item.id === id);
+    setSelectedId(id);
+    if (block?.page) setActivePage(block.page);
+  }
+
+  function changePage(page: number) {
+    setActivePage(page);
+    const firstOnPage = blocks.find((block) => (block.page ?? 1) === page && block.status === "review")
+      ?? blocks.find((block) => (block.page ?? 1) === page);
+    if (firstOnPage) setSelectedId(firstOnPage.id);
   }
 
   function setBlockStatus(status: BlockStatus) {
@@ -324,13 +362,17 @@ export default function Home() {
             blocks={blocks}
             selectedBlock={selectedBlock}
             selectedId={selectedId}
-            setSelectedId={setSelectedId}
+            setSelectedId={selectBlock}
             filter={filter}
             setFilter={setFilter}
             filteredBlocks={filteredBlocks}
             pendingCount={pendingCount}
             confirmedCount={confirmedCount}
-            pageCount={pageCount}
+            pages={pages}
+            activePage={activePage}
+            changePage={changePage}
+            taskId={taskId}
+            processingApiBase={PROCESSING_API_BASE}
             updateTranslation={updateTranslation}
             setBlockStatus={setBlockStatus}
             addToGlossary={addToGlossary}
@@ -463,13 +505,24 @@ function ReviewWorkspace(props: {
   filteredBlocks: TranslationBlock[];
   pendingCount: number;
   confirmedCount: number;
-  pageCount: number;
+  pages: PdfPage[];
+  activePage: number;
+  changePage: (page: number) => void;
+  taskId: string;
+  processingApiBase: string;
   updateTranslation: (value: string) => void;
   setBlockStatus: (status: BlockStatus) => void;
   addToGlossary: () => void;
   openExport: () => void;
 }) {
-  const { fileName, blocks, selectedBlock, selectedId, setSelectedId, filter, setFilter, filteredBlocks, pendingCount, confirmedCount, pageCount, updateTranslation, setBlockStatus, addToGlossary, openExport } = props;
+  const { fileName, blocks, selectedBlock, selectedId, setSelectedId, filter, setFilter, filteredBlocks, pendingCount, confirmedCount, pages, activePage, changePage, taskId, processingApiBase, updateTranslation, setBlockStatus, addToGlossary, openExport } = props;
+  const currentPage = pages.find((page) => page.page === activePage) ?? pages[0];
+  const currentBlocks = blocks.filter((block) => (block.page ?? 1) === activePage);
+  const currentFilteredBlocks = filteredBlocks.filter((block) => (block.page ?? 1) === activePage);
+  const pagePending = currentBlocks.filter((block) => block.status === "review").length;
+  const completion = blocks.length ? Math.round(confirmedCount / blocks.length * 100) : 0;
+  const hasRealPreview = Boolean(taskId && processingApiBase && currentPage);
+  const previewUrl = (page: number, dpi = 128) => `${processingApiBase}/api/tasks/${taskId}/pages/${page}/preview?dpi=${dpi}`;
   return (
     <div className="review-page">
       <div className="review-heading">
@@ -478,31 +531,55 @@ function ReviewWorkspace(props: {
       </div>
       <section className="review-summary">
         <div><span>任务状态</span><strong className="warning-text">待复核</strong></div>
-        <div><span>页面</span><strong>1 / {pageCount}</strong></div>
+        <div><span>页面</span><strong>{activePage} / {pages.length}</strong></div>
         <div><span>文字块</span><strong>{blocks.length}</strong></div>
         <div><span>已确认</span><strong className="success-text">{confirmedCount}</strong></div>
         <div><span>待确认</span><strong className="error-text">{pendingCount}</strong></div>
-        <div className="completion"><span>完成度</span><div><i style={{ width: `${confirmedCount / blocks.length * 100}%` }} /></div><strong>{Math.round(confirmedCount / blocks.length * 100)}%</strong></div>
+        <div className="completion"><span>完成度</span><div><i style={{ width: `${completion}%` }} /></div><strong>{completion}%</strong></div>
       </section>
 
       <section className="review-workbench">
-        <div className="page-rail"><span className="rail-label">页面</span>{Array.from({ length: pageCount }, (_, index) => <button className={`page-thumb ${index === 0 ? "active" : ""}`} key={index}><div className={`mini-page ${index ? "second" : ""}`}><i /><i />{index === 0 && <i />}</div><b>{index + 1}</b><small>{index === 0 ? `${pendingCount}处待确认` : "待查看"}</small></button>)}</div>
+        <div className="page-rail"><span className="rail-label">页面</span>{pages.map((page) => {
+          const pending = blocks.filter((block) => (block.page ?? 1) === page.page && block.status === "review").length;
+          return <button className={`page-thumb ${page.page === activePage ? "active" : ""}`} key={page.page} onClick={() => changePage(page.page)}>
+            {taskId ? <img src={previewUrl(page.page, 72)} alt={`第 ${page.page} 页缩略图`} /> : <div className={`mini-page ${page.page > 1 ? "second" : ""}`}><i /><i />{page.page === 1 && <i />}</div>}
+            <b>{page.page}</b><small>{pending ? `${pending}处待确认` : page.extraction === "ocr-required" ? "需OCR" : "已检查"}</small>
+          </button>;
+        })}</div>
         <div className="document-stage">
-          <div className="stage-toolbar"><div><button>−</button><span>85%</span><button>＋</button></div><span>第 1 页 / 共 {pageCount} 页</span><button>适合页面</button></div>
+          <div className="stage-toolbar"><div><button aria-label="缩小">−</button><span>适合页面</span><button aria-label="放大">＋</button></div><span>第 {activePage} 页 / 共 {pages.length} 页</span><button>原始比例</button></div>
           <div className="document-canvas">
-            <div className="spec-page">
+            {hasRealPreview ? <div className="real-pdf-page" style={{ aspectRatio: `${currentPage.width} / ${currentPage.height}` }}>
+              <img src={previewUrl(activePage)} alt={`${fileName} 第 ${activePage} 页`} />
+              {currentBlocks.filter((block) => block.bbox).map((block) => {
+                const bbox = block.bbox!;
+                const left = bbox.x0 / currentPage.width * 100;
+                const top = bbox.y0 / currentPage.height * 100;
+                const width = Math.max((bbox.x1 - bbox.x0) / currentPage.width * 100, 0.8);
+                const height = Math.max((bbox.y1 - bbox.y0) / currentPage.height * 100, 1.1);
+                return <button
+                  key={block.id}
+                  className={`pdf-coordinate-marker ${block.status === "review" ? "needs-review" : "confirmed"} ${selectedId === block.id ? "selected" : ""}`}
+                  style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
+                  onClick={() => setSelectedId(block.id)}
+                  title={`${block.original} → ${block.translation}`}
+                  aria-label={`定位 ${block.original}`}
+                ><span>{block.marker}</span></button>;
+              })}
+              {currentPage.extraction === "ocr-required" && <div className="page-ocr-notice"><strong>本页需要日文 OCR</strong><span>{currentPage.warning ?? "安装日文OCR语言包后可自动识别"}</span></div>}
+            </div> : <div className="spec-page">
               <div className="spec-brand"><strong>縫 製 指 示 書</strong><span>APPAREL SPECIFICATION</span></div>
               <div className="spec-meta"><div>SEASON<br /><b>2026 AW</b></div><div>STYLE<br /><b>オフショルスウェット</b></div><div>LOT NO.<br /><b>LKC73104AV</b></div><div>COUNTRY<br /><b>中国</b></div></div>
               <div className="spec-body"><div className="garment-drawing"><div className="neck" /><div className="sleeve left" /><div className="torso" /><div className="sleeve right" /><div className="rib" /><span className="measure-line vertical">A</span><span className="measure-line horizontal">C</span></div><div className="measure-table">{["身丈", "肩幅", "身幅", "裾巾", "袖丈", "裄丈", "袖巾", "袖口巾", "前下がり"].map((label, index) => <div key={label}><span>{String.fromCharCode(65 + index)}</span><b>{label}</b><em>{[60, "-", 56, 50, "-", 82, 25, "8.5/16", 8][index]}</em></div>)}</div></div>
               <div className="spec-footer"><div><b>生地／材料</b><span>身頃・袖</span><span>衿・袖口・裾</span></div><div><b>ネーム類</b><span>ブランドネーム</span><span>洗濯ネーム</span></div></div>
-              {blocks.filter((block) => (block.page ?? 1) === 1).slice(0, 8).map((block) => <button key={block.id} className={`text-marker ${block.position} ${block.status === "review" ? "needs-review" : "confirmed"} ${selectedId === block.id ? "selected" : ""}`} onClick={() => setSelectedId(block.id)} aria-label={`定位 ${block.original}`}><span>{block.marker}</span><small>{block.translation}</small></button>)}
-            </div>
+              {currentBlocks.slice(0, 8).map((block) => <button key={block.id} className={`text-marker ${block.position} ${block.status === "review" ? "needs-review" : "confirmed"} ${selectedId === block.id ? "selected" : ""}`} onClick={() => setSelectedId(block.id)} aria-label={`定位 ${block.original}`}><span>{block.marker}</span><small>{block.translation}</small></button>)}
+            </div>}
           </div>
         </div>
         <div className="translation-panel">
-          <div className="panel-header"><div><h2>文字块审校</h2><p>点击页面标记或下方列表开始编辑</p></div><span>{pendingCount} 待确认</span></div>
-          <div className="filter-tabs"><button className={filter === "review" ? "active" : ""} onClick={() => setFilter("review")}>待确认 <b>{pendingCount}</b></button><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button className={filter === "confirmed" ? "active" : ""} onClick={() => setFilter("confirmed")}>已确认</button></div>
-          <div className="block-list">{filteredBlocks.map((block) => <button key={block.id} className={`${selectedId === block.id ? "selected" : ""} ${block.status}`} onClick={() => setSelectedId(block.id)}><span className="block-marker">{block.marker}</span><div><strong>{block.original}</strong><small>{block.translation}</small></div><em>{block.confidence}%</em></button>)}</div>
+          <div className="panel-header"><div><h2>文字块审校</h2><p>正在检查第 {activePage} 页</p></div><span>{pagePending} 待确认</span></div>
+          <div className="filter-tabs"><button className={filter === "review" ? "active" : ""} onClick={() => setFilter("review")}>待确认 <b>{pagePending}</b></button><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>本页全部</button><button className={filter === "confirmed" ? "active" : ""} onClick={() => setFilter("confirmed")}>已确认</button></div>
+          <div className="block-list">{currentFilteredBlocks.length ? currentFilteredBlocks.map((block) => <button key={block.id} className={`${selectedId === block.id ? "selected" : ""} ${block.status}`} onClick={() => setSelectedId(block.id)}><span className="block-marker">{block.marker}</span><div><strong>{block.original}</strong><small>{block.translation}</small></div><em>{block.confidence}%</em></button>) : <div className="empty-blocks">本页没有符合当前筛选条件的文字块</div>}</div>
           <div className="editor-card">
             <div className="editor-meta"><span className={`confidence ${selectedBlock.confidence < 80 ? "low" : ""}`}>识别置信度 {selectedBlock.confidence}%</span>{selectedBlock.glossary && <span className="glossary-hit">已命中术语</span>}</div>
             <label>日文原文<textarea value={selectedBlock.original} readOnly /></label>

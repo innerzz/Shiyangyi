@@ -41,6 +41,8 @@ test("keeps the replaceable translation and real PDF integration points", async 
 
   assert.match(page, /NEXT_PUBLIC_PROCESSING_API_BASE/);
   assert.match(page, /\/api\/tasks\/analyze/);
+  assert.match(page, /pages\/\$\{page\}\/preview/);
+  assert.match(page, /pdf-coordinate-marker/);
   assert.match(page, /\/export/);
   assert.match(page, /待复核/);
   assert.match(contract, /interface TranslationProvider/);

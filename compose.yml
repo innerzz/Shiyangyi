@@ -1,0 +1,22 @@
+name: shiyangyi
+
+services:
+  processing-api:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      DEFAULT_GLOSSARY_PATH: /app/config/glossary.xlsx
+      TASK_STORAGE_DIR: /app/data/tasks
+    volumes:
+      - ./backend/data/tasks:/app/data/tasks
+      - ${GLOSSARY_FILE:?请在根目录.env中配置GLOSSARY_FILE}:/app/config/glossary.xlsx:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

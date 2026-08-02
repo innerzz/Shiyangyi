@@ -10,6 +10,7 @@
 - 高置信度固定术语直接使用，其余内容进入人工确认
 - OpenAI兼容的标准翻译服务适配器，可通过环境变量替换
 - 原文坐标标记与中日文对照审校
+- 审校页显示真实PDF页面、实际文字坐标框和逐页待确认数量
 - 低置信度、术语冲突和待复核状态筛选
 - 人工修改、确认、保留原文和术语候选操作
 - 原PDF坐标级中文回写，保留页面尺寸、表格和款式图
@@ -56,6 +57,14 @@ set +a
 访问 `http://localhost:8000/health` 可检查翻译适配器和日文OCR是否可用。
 
 扫描PDF需要Tesseract及日文语言包。`backend/Dockerfile` 已包含日文OCR和Noto CJK字体，可直接作为企业服务器部署基础；本机未安装日文语言包时，扫描页会明确标为“需OCR/待复核”，不会误报处理成功。
+
+也可以将根目录 `.env.example` 复制为 `.env`，填写 `GLOSSARY_FILE` 后一键启动容器：
+
+```bash
+docker compose up --build -d
+```
+
+容器会把术语库以只读方式挂载，任务文件保存在 `backend/data/tasks`。网页通过 `NEXT_PUBLIC_PROCESSING_API_BASE` 连接该服务。
 
 ## 构建
 
