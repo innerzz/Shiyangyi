@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -29,6 +30,9 @@ def run(pdf: Path, glossary_path: Path):
             for index, source_page in enumerate(source_document):
                 output_page = output_document[index]
                 assert output_page.rect == source_page.rect, "原页面尺寸必须保持不变"
-                assert len(output_page.get_images(full=True)) >= len(source_page.get_images(full=True)), "原页面图片不得丢失"
-                assert len(output_page.get_drawings()) >= len(source_page.get_drawings()), "原页面线稿不得丢失"
+                source_words = Counter(word[4] for word in source_page.get_text("words"))
+                output_words = Counter(word[4] for word in output_page.get_text("words"))
+                assert all(output_words[word] >= count for word, count in source_words.items()), "原页面文字必须完整保留"
+                assert len(output_page.get_images(full=True)) == len(source_page.get_images(full=True)), "原页面图片必须原样保留"
+                assert len(output_page.get_drawings()) == len(source_page.get_drawings()), "原页面线稿必须原样保留"
     return pages, blocks
