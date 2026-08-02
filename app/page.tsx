@@ -7,6 +7,7 @@ type BlockStatus = "confirmed" | "review" | "kept";
 
 type TranslationBlock = {
   id: number;
+  backendId?: string;
   marker: string;
   original: string;
   translation: string;
@@ -14,7 +15,30 @@ type TranslationBlock = {
   status: BlockStatus;
   glossary: boolean;
   position: string;
+  page?: number;
+  source?: string;
 };
+
+type AnalyzeResponse = {
+  task_id: string;
+  filename: string;
+  provider: string;
+  ocr_available: boolean;
+  pages: Array<{ page: number; extraction: string; warning?: string }>;
+  blocks: Array<{
+    id: string;
+    page: number;
+    original: string;
+    translation: string;
+    confidence: number;
+    status: BlockStatus;
+    source: string;
+    matched_terms: string[];
+  }>;
+};
+
+const PROCESSING_API_BASE = (process.env.NEXT_PUBLIC_PROCESSING_API_BASE ?? "").replace(/\/$/, "");
+const markerPositions = ["mark-a", "mark-b", "mark-c", "mark-d", "mark-e", "mark-f", "mark-g", "mark-h"];
 
 const initialBlocks: TranslationBlock[] = [
   { id: 1, marker: "A", original: "生地① CVC裏起毛", translation: "面料① CVC抓绒", confidence: 98, status: "confirmed", glossary: true, position: "mark-a" },
@@ -56,12 +80,18 @@ export default function Home() {
   const [exportOpen, setExportOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [glossarySearch, setGlossarySearch] = useState("");
+  const [taskId, setTaskId] = useState("");
+  const [pageCount, setPageCount] = useState(2);
+  const [providerName, setProviderName] = useState("演示数据");
+  const [ocrReady, setOcrReady] = useState(false);
+  const [processingMode, setProcessingMode] = useState<"demo" | "real">("demo");
+  const [exporting, setExporting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selectedBlock = blocks.find((block) => block.id === selectedId) ?? blocks[0];
   const pendingCount = blocks.filter((block) => block.status === "review").length;
   const confirmedCount = blocks.filter((block) => block.status !== "review").length;
-  const filteredBlocks = blocks.filter((block) => filter === "all" || block.status === filter);
+  const filteredBlocks = blocks.filter((block) => filter === "all" || (filter === "review" ? block.status === "review" : block.status !== "review"));
 
   const filteredGlossary = useMemo(() => {
     const query = glossarySearch.trim().toLowerCase();
@@ -72,9 +102,10 @@ export default function Home() {
     if (screen !== "processing") return;
     const timer = window.setInterval(() => {
       setProgress((current) => {
-        const next = Math.min(current + 2, 100);
+        const limit = processingMode === "real" ? 82 : 100;
+        const next = Math.min(current + 2, limit);
         setActiveStep(next < 24 ? 0 : next < 50 ? 1 : next < 76 ? 2 : 3);
-        if (next === 100) {
+        if (next === 100 && processingMode === "demo") {
           window.clearInterval(timer);
           window.setTimeout(() => setScreen("review"), 500);
         }
@@ -82,7 +113,7 @@ export default function Home() {
       });
     }, 65);
     return () => window.clearInterval(timer);
-  }, [screen]);
+  }, [screen, processingMode]);
 
   useEffect(() => {
     if (!toast) return;
@@ -109,11 +140,65 @@ export default function Home() {
     chooseFile(event.dataTransfer.files?.[0]);
   }
 
-  function startProcessing() {
+  async function startProcessing() {
     if (!file) return;
     setProgress(0);
     setActiveStep(0);
+    setTaskId("");
+    const realMode = Boolean(PROCESSING_API_BASE);
+    setProcessingMode(realMode ? "real" : "demo");
     setScreen("processing");
+    if (!realMode) return;
+
+    const form = new FormData();
+    form.append("pdf", file);
+    form.append("translate", "true");
+    try {
+      const response = await fetch(`${PROCESSING_API_BASE}/api/tasks/analyze`, { method: "POST", body: form });
+      const payload = await response.json() as AnalyzeResponse | { detail?: string };
+      if (!response.ok || !("blocks" in payload)) throw new Error("detail" in payload ? (payload.detail ?? "处理服务返回异常") : "处理服务返回异常");
+
+      const realBlocks: TranslationBlock[] = payload.blocks.map((block, index) => ({
+        id: index + 1,
+        backendId: block.id,
+        marker: String(index + 1),
+        original: block.original,
+        translation: block.translation,
+        confidence: Math.round(block.confidence * 100),
+        status: block.status,
+        glossary: block.matched_terms.length > 0,
+        position: markerPositions[index % markerPositions.length],
+        page: block.page,
+        source: block.source,
+      }));
+      payload.pages.filter((page) => page.extraction === "ocr-required").forEach((page) => {
+        realBlocks.push({
+          id: realBlocks.length + 1,
+          marker: `P${page.page}`,
+          original: `第 ${page.page} 页为扫描页面`,
+          translation: "等待日文 OCR 识别后再翻译",
+          confidence: 0,
+          status: "review",
+          glossary: false,
+          position: markerPositions[realBlocks.length % markerPositions.length],
+          page: page.page,
+          source: "ocr-required",
+        });
+      });
+      setBlocks(realBlocks.length ? realBlocks : initialBlocks);
+      setSelectedId(realBlocks.find((block) => block.status === "review")?.id ?? realBlocks[0]?.id ?? 1);
+      setTaskId(payload.task_id);
+      setPageCount(payload.pages.length);
+      setProviderName(payload.provider);
+      setOcrReady(payload.ocr_available);
+      setProgress(100);
+      setActiveStep(3);
+      window.setTimeout(() => setScreen("review"), 450);
+    } catch (error) {
+      setToast(`真实处理服务暂不可用，已切换演示模式：${error instanceof Error ? error.message : "未知错误"}`);
+      setProcessingMode("demo");
+      setProgress(0);
+    }
   }
 
   function updateTranslation(value: string) {
@@ -145,6 +230,42 @@ export default function Home() {
     setToast(`${reviewState}交互式 HTML 已生成`);
   }
 
+  async function downloadTranslatedPdf() {
+    if (!taskId) {
+      downloadReviewHtml();
+      return;
+    }
+    setExporting(true);
+    try {
+      const response = await fetch(`${PROCESSING_API_BASE}/api/tasks/${taskId}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          blocks: blocks.filter((block) => block.backendId).map((block) => ({
+            id: block.backendId!,
+            translation: block.translation,
+            status: block.status,
+          })),
+        }),
+      });
+      if (!response.ok) throw new Error("PDF生成失败");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const reviewState = pendingCount > 0 ? "待复核" : "正式版";
+      anchor.href = url;
+      anchor.download = `${(file?.name ?? "试样书").replace(/\.pdf$/i, "")}_中文版_${reviewState}.pdf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setExportOpen(false);
+      setToast(`坐标回写 PDF 已生成，版本：${reviewState}`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "PDF生成失败");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -158,7 +279,7 @@ export default function Home() {
           <button onClick={() => setToast("审批模块将在管理版中开放")}>审批管理</button>
         </nav>
         <div className="topbar-actions">
-          <span className="environment"><i /> 本地演示环境</span>
+          <span className="environment"><i /> {taskId ? "真实处理已连接" : "安全演示环境"}</span>
           <button className="user-button" aria-label="用户菜单">常</button>
         </div>
       </header>
@@ -178,8 +299,8 @@ export default function Home() {
         </div>
         <div className="system-card">
           <div><span>系统状态</span><strong>运行正常</strong></div>
-          <p><i className="success-dot" /> OCR 识别模块已就绪</p>
-          <p><i className="warning-dot" /> 翻译接口使用演示数据</p>
+          <p><i className={ocrReady ? "success-dot" : "warning-dot"} /> OCR：{ocrReady ? "日文识别已就绪" : "按环境自动回退"}</p>
+          <p><i className={taskId ? "success-dot" : "warning-dot"} /> 翻译：{providerName}</p>
         </div>
       </aside>
 
@@ -209,6 +330,7 @@ export default function Home() {
             filteredBlocks={filteredBlocks}
             pendingCount={pendingCount}
             confirmedCount={confirmedCount}
+            pageCount={pageCount}
             updateTranslation={updateTranslation}
             setBlockStatus={setBlockStatus}
             addToGlossary={addToGlossary}
@@ -231,12 +353,12 @@ export default function Home() {
               <div className="alert success"><strong>全部文字块均已确认</strong><p>本次可以生成不含待复核标记的正式版本。</p></div>
             )}
             <div className="export-summary">
-              <div><span>输出格式</span><strong>交互式 HTML</strong></div>
+              <div><span>输出格式</span><strong>{taskId ? "坐标回写 PDF" : "交互式 HTML"}</strong></div>
               <div><span>确认内容</span><strong>{confirmedCount} / {blocks.length}</strong></div>
               <div><span>页面标记</span><strong>{pendingCount > 0 ? "待复核" : "无水印"}</strong></div>
             </div>
-            <p className="modal-note">导出的 HTML 可直接打开，并通过浏览器“打印”保存为 PDF。正式 PDF 坐标回写将在后端服务接入后复用同一审校数据。</p>
-            <div className="modal-actions"><button className="ghost-button" onClick={() => setExportOpen(false)}>返回审校</button><button className="primary-button" onClick={downloadReviewHtml}>确认并导出</button></div>
+            <p className="modal-note">{taskId ? "系统将在原PDF文字坐标上写入中文，保留页面尺寸、表格和款式图；仍有未确认内容时自动添加待复核标记。" : "当前预览站未连接文件处理服务，先导出可交互HTML；连接企业后端后即可生成坐标回写PDF。"}</p>
+            <div className="modal-actions"><button className="ghost-button" onClick={taskId ? downloadReviewHtml : () => setExportOpen(false)}>{taskId ? "另存审校HTML" : "返回审校"}</button><button className="primary-button" disabled={exporting} onClick={taskId ? downloadTranslatedPdf : downloadReviewHtml}>{exporting ? "正在生成…" : "确认并导出"}</button></div>
           </section>
         </div>
       )}
@@ -288,7 +410,7 @@ function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChang
           <div className="rules-panel">
             <div className="rules-header"><span>本次使用规则</span><b>企业默认</b></div>
             <ul>
-              <li><span>译</span><div><strong>标准翻译接口</strong><small>服务可替换，演示版使用样例数据</small></div></li>
+              <li><span>译</span><div><strong>标准翻译接口</strong><small>服务可替换，由服务器环境统一配置</small></div></li>
               <li><span>锁</span><div><strong>高置信度术语自动锁定</strong><small>其余术语进入人工确认列表</small></div></li>
               <li><span>保</span><div><strong>品牌、款号和数值保持原文</strong><small>避免生产数据被误改</small></div></li>
               <li><span>版</span><div><strong>保持原页面结构</strong><small>异常文字块将在审校页标红</small></div></li>
@@ -341,12 +463,13 @@ function ReviewWorkspace(props: {
   filteredBlocks: TranslationBlock[];
   pendingCount: number;
   confirmedCount: number;
+  pageCount: number;
   updateTranslation: (value: string) => void;
   setBlockStatus: (status: BlockStatus) => void;
   addToGlossary: () => void;
   openExport: () => void;
 }) {
-  const { fileName, blocks, selectedBlock, selectedId, setSelectedId, filter, setFilter, filteredBlocks, pendingCount, confirmedCount, updateTranslation, setBlockStatus, addToGlossary, openExport } = props;
+  const { fileName, blocks, selectedBlock, selectedId, setSelectedId, filter, setFilter, filteredBlocks, pendingCount, confirmedCount, pageCount, updateTranslation, setBlockStatus, addToGlossary, openExport } = props;
   return (
     <div className="review-page">
       <div className="review-heading">
@@ -355,7 +478,7 @@ function ReviewWorkspace(props: {
       </div>
       <section className="review-summary">
         <div><span>任务状态</span><strong className="warning-text">待复核</strong></div>
-        <div><span>页面</span><strong>1 / 2</strong></div>
+        <div><span>页面</span><strong>1 / {pageCount}</strong></div>
         <div><span>文字块</span><strong>{blocks.length}</strong></div>
         <div><span>已确认</span><strong className="success-text">{confirmedCount}</strong></div>
         <div><span>待确认</span><strong className="error-text">{pendingCount}</strong></div>
@@ -363,16 +486,16 @@ function ReviewWorkspace(props: {
       </section>
 
       <section className="review-workbench">
-        <div className="page-rail"><span className="rail-label">页面</span><button className="page-thumb active"><div className="mini-page"><i /><i /><i /></div><b>1</b><small>{pendingCount}处待确认</small></button><button className="page-thumb"><div className="mini-page second"><i /><i /></div><b>2</b><small>已完成</small></button></div>
+        <div className="page-rail"><span className="rail-label">页面</span>{Array.from({ length: pageCount }, (_, index) => <button className={`page-thumb ${index === 0 ? "active" : ""}`} key={index}><div className={`mini-page ${index ? "second" : ""}`}><i /><i />{index === 0 && <i />}</div><b>{index + 1}</b><small>{index === 0 ? `${pendingCount}处待确认` : "待查看"}</small></button>)}</div>
         <div className="document-stage">
-          <div className="stage-toolbar"><div><button>−</button><span>85%</span><button>＋</button></div><span>第 1 页 / 共 2 页</span><button>适合页面</button></div>
+          <div className="stage-toolbar"><div><button>−</button><span>85%</span><button>＋</button></div><span>第 1 页 / 共 {pageCount} 页</span><button>适合页面</button></div>
           <div className="document-canvas">
             <div className="spec-page">
               <div className="spec-brand"><strong>縫 製 指 示 書</strong><span>APPAREL SPECIFICATION</span></div>
               <div className="spec-meta"><div>SEASON<br /><b>2026 AW</b></div><div>STYLE<br /><b>オフショルスウェット</b></div><div>LOT NO.<br /><b>LKC73104AV</b></div><div>COUNTRY<br /><b>中国</b></div></div>
               <div className="spec-body"><div className="garment-drawing"><div className="neck" /><div className="sleeve left" /><div className="torso" /><div className="sleeve right" /><div className="rib" /><span className="measure-line vertical">A</span><span className="measure-line horizontal">C</span></div><div className="measure-table">{["身丈", "肩幅", "身幅", "裾巾", "袖丈", "裄丈", "袖巾", "袖口巾", "前下がり"].map((label, index) => <div key={label}><span>{String.fromCharCode(65 + index)}</span><b>{label}</b><em>{[60, "-", 56, 50, "-", 82, 25, "8.5/16", 8][index]}</em></div>)}</div></div>
               <div className="spec-footer"><div><b>生地／材料</b><span>身頃・袖</span><span>衿・袖口・裾</span></div><div><b>ネーム類</b><span>ブランドネーム</span><span>洗濯ネーム</span></div></div>
-              {blocks.map((block) => <button key={block.id} className={`text-marker ${block.position} ${block.status === "review" ? "needs-review" : "confirmed"} ${selectedId === block.id ? "selected" : ""}`} onClick={() => setSelectedId(block.id)} aria-label={`定位 ${block.original}`}><span>{block.marker}</span><small>{block.translation}</small></button>)}
+              {blocks.filter((block) => (block.page ?? 1) === 1).slice(0, 8).map((block) => <button key={block.id} className={`text-marker ${block.position} ${block.status === "review" ? "needs-review" : "confirmed"} ${selectedId === block.id ? "selected" : ""}`} onClick={() => setSelectedId(block.id)} aria-label={`定位 ${block.original}`}><span>{block.marker}</span><small>{block.translation}</small></button>)}
             </div>
           </div>
         </div>
