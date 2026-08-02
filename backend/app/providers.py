@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List, Protocol
 import httpx
 
 from .glossary import Glossary
+from .retain_config import retain_value
 
 
 @dataclass
@@ -194,6 +195,15 @@ class OpenAICompatibleProvider:
 
 def provider_from_environment() -> TranslationProvider:
     provider = os.getenv("TRANSLATION_PROVIDER", "glossary-local").strip().lower()
+    if provider == "retain-desktop":
+        base_url = retain_value("baseUrl", "TRANSLATION_API_BASE")
+        api_key = retain_value("modelApiKey", "TRANSLATION_API_KEY")
+        model = retain_value("model", "TRANSLATION_MODEL")
+        if not all([base_url, api_key, model]):
+            raise RuntimeError("RetainPDF 中的 DeepSeek 配置不完整")
+        instance = OpenAICompatibleProvider(base_url, api_key, model)
+        instance.name = "deepseek-retain-desktop"
+        return instance
     if provider in {"openai", "openai-compatible"}:
         base_url = os.getenv("TRANSLATION_API_BASE", "").strip()
         api_key = os.getenv("TRANSLATION_API_KEY", "").strip()

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from .glossary import Glossary
 from .models import AnalyzeResponse, ExportRequest, TranslationBlock
 from .pdf_service import analyze_pdf, export_pdf, ocr_available, render_page_preview
+from .paddle_ocr import paddle_available
 from .providers import provider_from_environment
 
 
@@ -59,7 +60,12 @@ def _load_task(task_id: str):
 @app.get("/health")
 def health():
     provider = provider_from_environment()
-    return {"status": "ok", "provider": provider.name, "ocr_available": ocr_available()}
+    return {
+        "status": "ok",
+        "provider": provider.name,
+        "ocr_available": ocr_available(),
+        "paddle_ocr": paddle_available(),
+    }
 
 
 @app.post("/api/tasks/analyze", response_model=AnalyzeResponse)

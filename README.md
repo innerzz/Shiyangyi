@@ -58,7 +58,7 @@ set +a
 
 访问 `http://localhost:8000/health` 可检查翻译适配器和日文OCR是否可用。
 
-扫描PDF需要Tesseract及日文语言包。`backend/Dockerfile` 已包含日文OCR和Noto CJK字体，可直接作为企业服务器部署基础；本机未安装日文语言包时，扫描页会明确标为“需OCR/待复核”，不会误报处理成功。
+扫描PDF可使用Tesseract日文语言包，也可在 macOS 实验环境设置 `OCR_PROVIDER=paddle`，安全复用 RetainPDF 桌面端已保存的 PaddleOCR Token。有文字层的PDF优先直接提取，只有扫描页才会调用远程OCR；OCR结果会标为待复核。
 
 也可以将根目录 `.env.example` 复制为 `.env`，填写 `GLOSSARY_FILE` 后一键启动容器：
 
@@ -91,6 +91,8 @@ TRANSLATION_MODEL=your-model
 - 品牌、款号、色号、尺码和数值保护
 - 返回逐文字块置信度
 - 返回命中术语和待确认原因
+
+macOS 本机试验可设置 `TRANSLATION_PROVIDER=retain-desktop`，直接复用 RetainPDF 桌面端中的 DeepSeek 地址、模型和密钥。密钥不会复制到项目代码或日志。
 
 ## 后续升级
 

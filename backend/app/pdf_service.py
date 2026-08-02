@@ -10,10 +10,13 @@ import fitz
 
 from .glossary import Glossary
 from .models import BoundingBox, PageSummary, TranslationBlock
+from .paddle_ocr import paddle_available, recognize_pdf
 from .providers import TranslationProvider
 
 
 def ocr_available() -> bool:
+    if paddle_available():
+        return True
     binary = shutil.which("tesseract")
     if not binary:
         return False
@@ -89,13 +92,23 @@ def analyze_pdf(
     pages = []
     raw_blocks = []
     can_ocr = ocr_available()
+    native_rows = [_text_lines(page) for page in document]
+    scan_pages = [
+        index for index, rows in enumerate(native_rows)
+        if len("".join(row["text"] for row in rows)) < 8
+    ]
+    paddle_rows = recognize_pdf(pdf_path) if scan_pages and paddle_available() else {}
 
     for page_index, page in enumerate(document):
-        rows = _text_lines(page)
+        rows = native_rows[page_index]
         extraction = "text"
         warning = None
         if len("".join(row["text"] for row in rows)) < 8:
-            if can_ocr:
+            if page_index in paddle_rows:
+                rows = paddle_rows[page_index]
+                extraction = "paddle-ocr"
+                warning = "PaddleOCR 扫描页识别结果需人工复核"
+            elif can_ocr:
                 try:
                     rows = _ocr_lines(page)
                     extraction = "ocr"
