@@ -27,8 +27,8 @@ test("server-renders the garment translation workbench", async () => {
   assert.match(html, /<title>式样译｜服装试样书翻译工作台<\/title>/i);
   assert.match(html, /日文试样书翻译/);
   assert.match(html, /企业术语库/);
-  assert.match(html, /查看审校界面演示/);
-  assert.match(html, /不会读取或翻译你上传的PDF/);
+  assert.match(html, /开始识别与翻译|请先选择PDF文件/);
+  assert.match(html, /文件仅在当前环境处理/);
   assert.match(html, /高置信度术语自动锁定/);
   assert.doesNotMatch(html, /Your site is taking shape|codex-preview/i);
 });

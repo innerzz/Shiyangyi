@@ -98,6 +98,12 @@ class OpenAICompatibleProvider:
 
     def translate(self, texts: Iterable[str], glossary: Glossary) -> List[ProviderResult]:
         source_texts = list(texts)
+        results: List[ProviderResult] = []
+        for start in range(0, len(source_texts), 48):
+            results.extend(self._translate_batch(source_texts[start:start + 48], glossary))
+        return results
+
+    def _translate_batch(self, source_texts: List[str], glossary: Glossary) -> List[ProviderResult]:
         fixed_terms = [
             {"source": term.source, "target": term.target}
             for term in glossary.terms
@@ -114,6 +120,8 @@ class OpenAICompatibleProvider:
                     "content": (
                         "你是服装生产技术文件翻译员。将日文译为简体中文。"
                         "严格使用固定术语；品牌、款号、色号、尺码、数字和单位原样保留。"
+                        "日文原文可能包含汉字、平假名、片假名或中日英混排；不得因为日文含汉字就判定为中文。"
+                        "输出中不得保留可翻译的日文假名；若术语表命中，必须采用术语表译法。"
                         "只返回JSON：{\"translations\":[{\"text\":\"...\",\"confidence\":0-1,"
                         "\"review_reasons\":[\"...\"]}]}，条目顺序必须与输入一致。"
                     ),
@@ -147,6 +155,8 @@ class OpenAICompatibleProvider:
             reasons = [str(item) for item in row.get("review_reasons", [])]
             if missing:
                 reasons.append(f"需复核受保护内容：{', '.join(missing)}")
+            if self._has_untranslated_japanese(source, translation):
+                reasons.append("译文仍含日文，需重新翻译或人工复核")
             matched = [term.source for term in glossary.matches(source)]
             results.append(
                 ProviderResult(
@@ -157,6 +167,17 @@ class OpenAICompatibleProvider:
                 )
             )
         return results
+
+    @staticmethod
+    def _has_untranslated_japanese(source: str, translation: str) -> bool:
+        kana = re.compile(r"[\u3040-\u30ff\uff66-\uff9f]")
+        source_kana = kana.findall(source)
+        translated_kana = kana.findall(translation)
+        if not source_kana or not translated_kana:
+            return False
+        if source.strip() == translation.strip():
+            return True
+        return len(translated_kana) >= max(1, len(source_kana) // 2)
 
     @staticmethod
     def _protected_tokens(text: str) -> List[str]:

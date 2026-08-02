@@ -37,20 +37,18 @@ def _text_lines(page: fitz.Page) -> List[dict]:
             continue
         for line in block.get("lines", []):
             spans = [span for span in line.get("spans", []) if span.get("text", "").strip()]
-            if not spans:
-                continue
-            text = "".join(span["text"] for span in spans).strip()
-            if not text:
-                continue
-            bbox = fitz.Rect(line["bbox"])
-            rows.append(
-                {
-                    "text": text,
-                    "bbox": bbox,
-                    "font_size": max(float(span.get("size", 8)) for span in spans),
-                    "source": "text",
-                }
-            )
+            for span in spans:
+                text = str(span.get("text", "") or "").strip()
+                if not text:
+                    continue
+                rows.append(
+                    {
+                        "text": text,
+                        "bbox": fitz.Rect(span["bbox"]),
+                        "font_size": float(span.get("size", 8)),
+                        "source": "text",
+                    }
+                )
     return rows
 
 
@@ -195,9 +193,7 @@ def export_pdf(
     font_path = _font_path()
     original_page_count = len(document)
     review_items = []
-
-    # The original pages are immutable. Until a page template has been approved,
-    # translations are delivered in an appendix instead of deleting source text.
+    replacements = []
     for block in original_blocks:
         update = updates.get(block.id, {})
         translation = str(update.get("translation", block.translation)).strip()
@@ -208,8 +204,31 @@ def export_pdf(
             continue
         if not translation:
             translation = block.original
-        reason = "固定术语，待版面确认" if status == "confirmed" else "保留原文，待人工确认"
-        review_items.append((block, translation, reason))
+        if status == "confirmed" and translation != block.original:
+            replacements.append((block, translation))
+        elif status == "review":
+            review_items.append((block, translation, "保留原文，待人工确认"))
+
+    for block, _translation in replacements:
+        page = document[block.page - 1]
+        rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
+        rect.x0 += min(0.25, rect.width * 0.02)
+        rect.x1 -= min(0.25, rect.width * 0.02)
+        rect.y0 += min(0.3, rect.height * 0.04)
+        rect.y1 -= min(0.3, rect.height * 0.04)
+        page.add_redact_annot(rect, fill=False, cross_out=False)
+
+    for page in document:
+        page.apply_redactions(images=0, graphics=0, text=0)
+
+    for block, translation in replacements:
+        page = document[block.page - 1]
+        rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
+        rect.x0 -= 0.4
+        rect.x1 += max(1.5, rect.width * 0.08)
+        rect.y0 -= 0.8
+        rect.y1 += max(1.5, rect.height * 0.35)
+        _insert_fitted_translation(page, rect, translation, block.font_size, font_path)
 
     if review_items:
         _append_review_appendix(document, review_items, font_path)
@@ -237,6 +256,39 @@ def export_pdf(
     document.save(output_path, garbage=4, deflate=True)
     document.close()
     return pending
+
+
+def _insert_fitted_translation(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    text: str,
+    source_font_size: float,
+    font_path: Optional[str],
+) -> None:
+    kwargs = {"fontfile": font_path, "fontname": "writeback-cjk"} if font_path else {"fontname": "china-s"}
+    start_size = min(max(float(source_font_size) * 0.92, 5.0), 18.0)
+    for step in range(18):
+        font_size = max(3.2, start_size - step * 0.45)
+        result = page.insert_textbox(
+            rect,
+            text,
+            fontsize=font_size,
+            color=(0.05, 0.05, 0.05),
+            align=fitz.TEXT_ALIGN_LEFT,
+            overlay=True,
+            lineheight=1.0,
+            **kwargs,
+        )
+        if result >= 0:
+            return
+    page.insert_text(
+        fitz.Point(rect.x0, rect.y1 - 1),
+        text[:80],
+        fontsize=3.2,
+        color=(0.05, 0.05, 0.05),
+        overlay=True,
+        **kwargs,
+    )
 
 
 def _append_review_appendix(document: fitz.Document, items: List[tuple], font_path: Optional[str]) -> None:
