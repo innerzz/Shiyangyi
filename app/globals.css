@@ -76,6 +76,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role="button
 .summary-strip { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; display: grid; grid-template-columns: repeat(4, 1fr); margin-bottom: 24px; box-shadow: 0 2px 4px rgba(0,0,0,.06); }
 .summary-strip > div { min-height: 92px; display: flex; align-items: center; gap: 14px; padding: 18px 24px; border-right: 1px solid var(--border); }
 .summary-strip > div:last-child { border-right: 0; }
+.demo-mode-warning { margin: -8px 0 20px; padding: 14px 18px; display: flex; align-items: center; gap: 14px; background: #FFF3E0; border: 1px solid #E8C991; border-left: 4px solid var(--warning); }
+.demo-mode-warning strong { color: var(--heading); font-size: 12px; }
+.demo-mode-warning span { color: var(--body); font-size: 10px; line-height: 1.5; }
+.dropzone.demo-disabled { cursor: not-allowed; background: #FAFAFA; border-style: solid; }
+.dropzone.demo-disabled:hover { border-color: var(--border); background: #FAFAFA; }
 .summary-icon { width: 40px; height: 40px; display: grid; place-items: center; background: var(--blue-100); color: var(--blue-700); border-radius: 4px; font-size: 13px; font-weight: 600; }
 .summary-strip p { margin: 0; }
 .summary-strip strong { display: block; color: var(--heading); font-size: 21px; line-height: 1.2; }
@@ -148,6 +153,10 @@ td small { margin-top: 4px; color: var(--secondary); font-size: 10px; }
 .processing-note i { display: inline-block; width: 7px; height: 7px; background: var(--primary); border-radius: 50%; margin-right: 7px; }
 
 .review-page { margin: -8px -12px 0; }
+.review-provider-warning { margin: -4px 0 14px; padding: 11px 15px; display: flex; gap: 12px; align-items: center; background: #FFF3E0; border-left: 4px solid var(--warning); }
+.review-provider-warning.error { background: #FDE8EA; border-color: var(--error); }
+.review-provider-warning strong { color: var(--heading); font-size: 11px; }
+.review-provider-warning span { color: var(--body); font-size: 9px; }
 .breadcrumb { display: block; color: var(--secondary); font-size: 11px; margin-bottom: 8px; }
 .breadcrumb b { color: var(--primary); }
 .review-actions { display: flex; align-items: center; gap: 10px; }

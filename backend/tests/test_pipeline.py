@@ -1,8 +1,10 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import fitz
+
 from app.glossary import Glossary
-from app.pdf_service import analyze_pdf, render_page_preview
+from app.pdf_service import analyze_pdf, export_pdf, render_page_preview
 from app.providers import GlossaryProvider
 
 
@@ -16,4 +18,17 @@ def run(pdf: Path, glossary_path: Path):
         preview = Path(temporary) / "preview.png"
         render_page_preview(pdf, preview, 1, dpi=72)
         assert preview.is_file() and preview.stat().st_size > 1000, "应生成可用的页面预览图"
+        output = Path(temporary) / "conservative-export.pdf"
+        updates = {
+            block.id: {"translation": block.translation, "status": block.status}
+            for block in blocks
+        }
+        export_pdf(pdf, output, blocks, updates)
+        with fitz.open(pdf) as source_document, fitz.open(output) as output_document:
+            assert len(output_document) >= len(source_document), "导出不得丢失原页面"
+            for index, source_page in enumerate(source_document):
+                output_page = output_document[index]
+                assert output_page.rect == source_page.rect, "原页面尺寸必须保持不变"
+                assert len(output_page.get_images(full=True)) >= len(source_page.get_images(full=True)), "原页面图片不得丢失"
+                assert len(output_page.get_drawings()) >= len(source_page.get_drawings()), "原页面线稿不得丢失"
     return pages, blocks

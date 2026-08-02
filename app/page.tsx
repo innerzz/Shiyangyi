@@ -166,12 +166,14 @@ export default function Home() {
     setActivePage(1);
     const realMode = Boolean(PROCESSING_API_BASE);
     setProcessingMode(realMode ? "real" : "demo");
-    setScreen("processing");
     if (!realMode) {
       setBlocks(initialBlocks);
       setSelectedId(2);
+      setScreen("review");
+      setToast("当前站点仅演示审校界面，没有读取或翻译你选择的PDF");
       return;
     }
+    setScreen("processing");
 
     const form = new FormData();
     form.append("pdf", file);
@@ -256,16 +258,16 @@ export default function Home() {
   function downloadReviewHtml() {
     const reviewState = pendingCount > 0 ? "待复核" : "正式版";
     const rows = blocks.map((block) => `<tr><td>${block.marker}</td><td>${escapeHtml(block.original)}</td><td>${escapeHtml(block.translation)}</td><td>${block.status === "review" ? "待确认" : "已确认"}</td></tr>`).join("");
-    const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>试样书中文版_${reviewState}</title><style>body{font-family:Arial,"PingFang SC",sans-serif;margin:40px;color:#1A2332}header{border-bottom:4px solid #003B7A;padding-bottom:18px;margin-bottom:26px}h1{font-size:26px;margin:0 0 8px}.watermark{position:fixed;right:30px;top:22px;color:#C7000B;font-weight:700;border:2px solid #C7000B;padding:8px 14px;transform:rotate(-4deg)}table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid #D0D5DC;padding:12px;text-align:left}th{background:#F4F6F8;color:#003B7A}button{margin-top:24px;padding:12px 24px;background:#0055A5;color:white;border:0} @media print{button{display:none}}</style></head><body>${pendingCount > 0 ? '<div class="watermark">待复核</div>' : ""}<header><h1>日文试样书中文审校稿</h1><div>${escapeHtml(file?.name ?? "演示试样书.pdf")} · ${reviewState} · ${new Date().toLocaleString("zh-CN")}</div></header><table><thead><tr><th>标记</th><th>日文原文</th><th>中文译文</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table><button onclick="window.print()">打印或保存为 PDF</button></body></html>`;
+    const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>试样书审校记录_${reviewState}</title><style>body{font-family:Arial,"PingFang SC",sans-serif;margin:40px;color:#1A2332}header{border-bottom:4px solid #003B7A;padding-bottom:18px;margin-bottom:26px}h1{font-size:26px;margin:0 0 8px}.watermark{position:fixed;right:30px;top:22px;color:#C7000B;font-weight:700;border:2px solid #C7000B;padding:8px 14px;transform:rotate(-4deg)}table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid #D0D5DC;padding:12px;text-align:left}th{background:#F4F6F8;color:#003B7A}button{margin-top:24px;padding:12px 24px;background:#0055A5;color:white;border:0} @media print{button{display:none}}</style></head><body>${pendingCount > 0 ? '<div class="watermark">待复核</div>' : ""}<header><h1>日文试样书审校记录</h1><div>${escapeHtml(file?.name ?? "试样书.pdf")} · ${reviewState} · ${new Date().toLocaleString("zh-CN")}</div><p>本文件仅为文字审校记录，不是保留原版式的翻译PDF。</p></header><table><thead><tr><th>标记</th><th>日文原文</th><th>中文译文</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table><button onclick="window.print()">打印审校记录</button></body></html>`;
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${(file?.name ?? "试样书").replace(/\.pdf$/i, "")}_中文版_${reviewState}.html`;
+    anchor.download = `${(file?.name ?? "试样书").replace(/\.pdf$/i, "")}_审校记录_${reviewState}.html`;
     anchor.click();
     URL.revokeObjectURL(url);
     setExportOpen(false);
-    setToast(`${reviewState}交互式 HTML 已生成`);
+    setToast(`${reviewState}审校记录 HTML 已生成`);
   }
 
   async function downloadTranslatedPdf() {
@@ -353,12 +355,13 @@ export default function Home() {
             onFileChange={onFileChange}
             startProcessing={startProcessing}
             openReview={() => setScreen("review")}
+            realProcessingAvailable={Boolean(PROCESSING_API_BASE)}
           />
         )}
         {screen === "processing" && <Processing progress={progress} activeStep={activeStep} fileName={file?.name ?? "试样书.pdf"} />}
         {screen === "review" && (
           <ReviewWorkspace
-            fileName={file?.name ?? "LKC73104AV_オフショルスウェット.pdf"}
+            fileName={taskId ? (file?.name ?? "试样书.pdf") : "演示任务_未处理原PDF.pdf"}
             blocks={blocks}
             selectedBlock={selectedBlock}
             selectedId={selectedId}
@@ -377,6 +380,7 @@ export default function Home() {
             setBlockStatus={setBlockStatus}
             addToGlossary={addToGlossary}
             openExport={() => setExportOpen(true)}
+            providerName={providerName}
           />
         )}
         {screen === "glossary" && <Glossary search={glossarySearch} setSearch={setGlossarySearch} rows={filteredGlossary} />}
@@ -386,7 +390,7 @@ export default function Home() {
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setExportOpen(false)}>
           <section className="export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <div><span className="eyebrow">导出检查</span><h2 id="export-title">生成{pendingCount > 0 ? "待复核" : "正式"}版本</h2></div>
+              <div><span className="eyebrow">导出检查</span><h2 id="export-title">{taskId ? `生成${pendingCount > 0 ? "待复核" : "正式"}版本` : "演示模式不提供正式导出"}</h2></div>
               <button className="icon-button" onClick={() => setExportOpen(false)} aria-label="关闭">×</button>
             </div>
             {pendingCount > 0 ? (
@@ -395,12 +399,12 @@ export default function Home() {
               <div className="alert success"><strong>全部文字块均已确认</strong><p>本次可以生成不含待复核标记的正式版本。</p></div>
             )}
             <div className="export-summary">
-              <div><span>输出格式</span><strong>{taskId ? "坐标回写 PDF" : "交互式 HTML"}</strong></div>
+              <div><span>输出格式</span><strong>{taskId ? "无损回写 PDF" : "演示模式不可导出"}</strong></div>
               <div><span>确认内容</span><strong>{confirmedCount} / {blocks.length}</strong></div>
               <div><span>页面标记</span><strong>{pendingCount > 0 ? "待复核" : "无水印"}</strong></div>
             </div>
-            <p className="modal-note">{taskId ? "系统将在原PDF文字坐标上写入中文，保留页面尺寸、表格和款式图；仍有未确认内容时自动添加待复核标记。" : "当前预览站未连接文件处理服务，先导出可交互HTML；连接企业后端后即可生成坐标回写PDF。"}</p>
-            <div className="modal-actions"><button className="ghost-button" onClick={taskId ? downloadReviewHtml : () => setExportOpen(false)}>{taskId ? "另存审校HTML" : "返回审校"}</button><button className="primary-button" disabled={exporting} onClick={taskId ? downloadTranslatedPdf : downloadReviewHtml}>{exporting ? "正在生成…" : "确认并导出"}</button></div>
+            <p className="modal-note">{taskId ? "只替换已确认且能安全放回原坐标的译文；其余内容保留原文并写入待复核附录，避免遮挡图纸、表格或其他原始内容。" : "当前线上站点没有连接真实PDF处理服务。为避免产生误导，本模式不再生成所谓“中文版PDF”。"}</p>
+            <div className="modal-actions"><button className="ghost-button" onClick={taskId ? downloadReviewHtml : () => setExportOpen(false)}>{taskId ? "下载审校记录" : "关闭"}</button><button className="primary-button" disabled={exporting || !taskId} onClick={downloadTranslatedPdf}>{exporting ? "正在生成…" : taskId ? "生成无损PDF" : "需连接处理服务"}</button></div>
           </section>
         </div>
       )}
@@ -409,7 +413,7 @@ export default function Home() {
   );
 }
 
-function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChange, startProcessing, openReview }: {
+function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChange, startProcessing, openReview, realProcessingAvailable }: {
   file: File | null;
   dragging: boolean;
   fileInput: React.RefObject<HTMLInputElement | null>;
@@ -418,6 +422,7 @@ function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChang
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   startProcessing: () => void;
   openReview: () => void;
+  realProcessingAvailable: boolean;
 }) {
   return (
     <>
@@ -433,21 +438,24 @@ function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChang
         <div><span className="summary-icon">版</span><p><strong>100%</strong><small>原页尺寸保留</small></p></div>
       </section>
 
+      {!realProcessingAvailable && <section className="demo-mode-warning" role="status"><strong>当前是界面演示，不会读取或翻译你上传的PDF</strong><span>请使用“查看演示任务”体验审校流程。正式上传与无损PDF导出需要先连接企业处理服务。</span></section>}
+
       <section className="upload-card">
-        <div className="section-title"><div><span className="step-number">01</span><div><h2>新建翻译任务</h2><p>目前支持日文服装试样书PDF，单个文件建议不超过100MB。</p></div></div><span className="secure-note">文件仅在当前环境处理</span></div>
+        <div className="section-title"><div><span className="step-number">01</span><div><h2>新建翻译任务</h2><p>{realProcessingAvailable ? "目前支持日文服装试样书PDF，单个文件建议不超过100MB。" : "正式处理服务尚未连接，当前只能查看交互界面。"}</p></div></div><span className="secure-note">{realProcessingAvailable ? "文件仅在当前环境处理" : "演示模式"}</span></div>
         <div className="upload-grid">
           <div
-            className={`dropzone ${dragging ? "dragging" : ""} ${file ? "has-file" : ""}`}
-            onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+            className={`dropzone ${dragging ? "dragging" : ""} ${file ? "has-file" : ""} ${!realProcessingAvailable ? "demo-disabled" : ""}`}
+            onDragOver={(event) => { event.preventDefault(); if (realProcessingAvailable) setDragging(true); }}
             onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            onClick={() => fileInput.current?.click()}
+            onDrop={(event) => { if (realProcessingAvailable) onDrop(event); else event.preventDefault(); }}
+            onClick={() => { if (realProcessingAvailable) fileInput.current?.click(); }}
             role="button"
             tabIndex={0}
-            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") fileInput.current?.click(); }}
+            aria-disabled={!realProcessingAvailable}
+            onKeyDown={(event) => { if (realProcessingAvailable && (event.key === "Enter" || event.key === " ")) fileInput.current?.click(); }}
           >
-            <input ref={fileInput} type="file" accept="application/pdf,.pdf" onChange={onFileChange} hidden />
-            {file ? <><span className="file-icon">PDF</span><h3>{file.name}</h3><p>{formatBytes(file.size)} · 已准备上传</p><button className="link-button" type="button">更换文件</button></> : <><span className="upload-icon">⇧</span><h3>拖入日文试样书PDF</h3><p>或点击从电脑中选择文件</p><button className="ghost-button" type="button">选择PDF文件</button></>}
+            <input ref={fileInput} type="file" accept="application/pdf,.pdf" onChange={onFileChange} disabled={!realProcessingAvailable} hidden />
+            {!realProcessingAvailable ? <><span className="file-icon">DEMO</span><h3>上传功能暂未开放</h3><p>当前页面不会读取、翻译或保存你的PDF</p><button className="ghost-button" type="button" disabled>等待连接处理服务</button></> : file ? <><span className="file-icon">PDF</span><h3>{file.name}</h3><p>{formatBytes(file.size)} · 已准备上传</p><button className="link-button" type="button">更换文件</button></> : <><span className="upload-icon">⇧</span><h3>拖入日文试样书PDF</h3><p>或点击从电脑中选择文件</p><button className="ghost-button" type="button">选择PDF文件</button></>}
           </div>
           <div className="rules-panel">
             <div className="rules-header"><span>本次使用规则</span><b>企业默认</b></div>
@@ -457,7 +465,7 @@ function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChang
               <li><span>保</span><div><strong>品牌、款号和数值保持原文</strong><small>避免生产数据被误改</small></div></li>
               <li><span>版</span><div><strong>保持原页面结构</strong><small>异常文字块将在审校页标红</small></div></li>
             </ul>
-            <button className="primary-button full" disabled={!file} onClick={startProcessing}>{file ? "开始识别与翻译" : "请先选择PDF文件"}</button>
+            <button className="primary-button full" disabled={realProcessingAvailable && !file} onClick={startProcessing}>{realProcessingAvailable ? (file ? "开始识别与翻译" : "请先选择PDF文件") : "查看审校界面演示"}</button>
           </div>
         </div>
       </section>
@@ -514,8 +522,9 @@ function ReviewWorkspace(props: {
   setBlockStatus: (status: BlockStatus) => void;
   addToGlossary: () => void;
   openExport: () => void;
+  providerName: string;
 }) {
-  const { fileName, blocks, selectedBlock, selectedId, setSelectedId, filter, setFilter, filteredBlocks, pendingCount, confirmedCount, pages, activePage, changePage, taskId, processingApiBase, updateTranslation, setBlockStatus, addToGlossary, openExport } = props;
+  const { fileName, blocks, selectedBlock, selectedId, setSelectedId, filter, setFilter, filteredBlocks, pendingCount, confirmedCount, pages, activePage, changePage, taskId, processingApiBase, updateTranslation, setBlockStatus, addToGlossary, openExport, providerName } = props;
   const currentPage = pages.find((page) => page.page === activePage) ?? pages[0];
   const currentBlocks = blocks.filter((block) => (block.page ?? 1) === activePage);
   const currentFilteredBlocks = filteredBlocks.filter((block) => (block.page ?? 1) === activePage);
@@ -529,6 +538,7 @@ function ReviewWorkspace(props: {
         <div><span className="breadcrumb">翻译任务 / <b>人工审校</b></span><h1>{fileName.replace(/\.pdf$/i, "")}</h1><p>系统已完成初稿，请优先检查标红内容。</p></div>
         <div className="review-actions"><span className="save-state">✓ 所有修改已保存</span><button className="ghost-button">暂存退出</button><button className="primary-button" onClick={openExport}>导出中文版</button></div>
       </div>
+      {!taskId ? <div className="review-provider-warning error"><strong>这是固定演示数据，不是你上传PDF的翻译结果</strong><span>当前站点没有读取原文件，也不会提供正式PDF导出。</span></div> : providerName === "glossary-local" && <div className="review-provider-warning"><strong>当前仅启用企业术语替换，没有接入完整句子翻译服务</strong><span>未命中固定术语的内容会保留原文并进入待复核清单。</span></div>}
       <section className="review-summary">
         <div><span>任务状态</span><strong className="warning-text">待复核</strong></div>
         <div><span>页面</span><strong>{activePage} / {pages.length}</strong></div>

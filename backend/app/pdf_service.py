@@ -193,23 +193,51 @@ def export_pdf(
     document = fitz.open(source_path)
     pending = force_pending
     font_path = _font_path()
+    font = fitz.Font(fontfile=font_path) if font_path else fitz.Font(fontname="china-s")
+    replacements = []
+    review_items = []
 
+    # Only confirmed translations that safely fit the original text box are
+    # replaced. Everything else remains untouched and is listed in an appendix.
     for block in original_blocks:
         update = updates.get(block.id, {})
         translation = str(update.get("translation", block.translation)).strip()
         status = str(update.get("status", block.status))
         if status == "review":
             pending = True
-        if not translation or block.source == "ocr-required":
+        if not translation or block.source == "ocr-required" or translation == block.original:
+            if status == "review":
+                review_items.append((block, translation or block.original, "保留原文，待人工确认"))
             continue
-        page = document[block.page - 1]
         rect = fitz.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, block.bbox.y1)
-        padded = fitz.Rect(rect.x0 - 0.8, rect.y0 - 0.5, rect.x1 + 0.8, rect.y1 + 0.8)
-        page.draw_rect(padded, color=None, fill=(1, 1, 1), overlay=True)
-        font_size = max(4.5, min(float(block.font_size), rect.height * 0.82, 11))
+        max_size = min(float(block.font_size), rect.height * 0.78, 11)
+        text_width_at_one = max(font.text_length(translation, fontsize=1), 0.1)
+        font_size = min(max_size, rect.width * 0.96 / text_width_at_one)
+        if status != "confirmed" or font_size < 4.5:
+            pending = True
+            reason = "译文无法安全写回原坐标" if font_size < 4.5 else "译文尚未人工确认"
+            review_items.append((block, translation, reason))
+            continue
+        replacements.append((block, translation, rect, font_size))
+
+    # Redact text only. Images, table lines and vector drawings are explicitly preserved.
+    pages_with_redactions = set()
+    for block, _, rect, _ in replacements:
+        page = document[block.page - 1]
+        page.add_redact_annot(rect, fill=None, cross_out=False)
+        pages_with_redactions.add(block.page - 1)
+    for page_index in pages_with_redactions:
+        document[page_index].apply_redactions(
+            images=fitz.PDF_REDACT_IMAGE_NONE,
+            graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+            text=fitz.PDF_REDACT_TEXT_REMOVE,
+        )
+
+    for block, translation, rect, font_size in replacements:
+        page = document[block.page - 1]
         kwargs = {"fontfile": font_path, "fontname": "review-cjk"} if font_path else {"fontname": "china-s"}
         result = page.insert_textbox(
-            padded,
+            rect,
             translation,
             fontsize=font_size,
             color=(0.03, 0.12, 0.22),
@@ -218,14 +246,13 @@ def export_pdf(
             **kwargs,
         )
         if result < 0:
-            page.insert_textbox(
-                fitz.Rect(padded.x0, padded.y0, min(page.rect.x1 - 2, padded.x1 + rect.width), padded.y1 + rect.height),
-                translation,
-                fontsize=max(4.5, font_size * 0.72),
-                color=(0.03, 0.12, 0.22),
-                overlay=True,
-                **kwargs,
-            )
+            # The fit was preflighted; this fallback should be rare. Keep the
+            # translated content visible and flag it in the appendix.
+            pending = True
+            review_items.append((block, translation, "写回后需要检查排版"))
+
+    if review_items:
+        _append_review_appendix(document, review_items, font_path)
 
     if pending:
         for page in document:
@@ -246,3 +273,60 @@ def export_pdf(
     document.save(output_path, garbage=4, deflate=True)
     document.close()
     return pending
+
+
+def _append_review_appendix(document: fitz.Document, items: List[tuple], font_path: Optional[str]) -> None:
+    page_width, page_height = 841.89, 595.28
+    margin = 36
+    row_height = 44
+    rows_per_page = 10
+    kwargs = {"fontfile": font_path, "fontname": "appendix-cjk"} if font_path else {"fontname": "china-s"}
+
+    for offset in range(0, len(items), rows_per_page):
+        page = document.new_page(width=page_width, height=page_height)
+        page.insert_textbox(
+            fitz.Rect(margin, 24, page_width - margin, 52),
+            "待复核翻译清单",
+            fontsize=17,
+            color=(0.0, 0.23, 0.48),
+            overlay=True,
+            **kwargs,
+        )
+        page.insert_textbox(
+            fitz.Rect(margin, 50, page_width - margin, 70),
+            "为避免破坏原式样书，本清单中的内容未覆盖原页面。确认后再执行坐标回写。",
+            fontsize=8,
+            color=(0.24, 0.31, 0.38),
+            overlay=True,
+            **kwargs,
+        )
+        y = 82
+        for block, translation, reason in items[offset:offset + rows_per_page]:
+            row = fitz.Rect(margin, y, page_width - margin, y + row_height)
+            page.draw_rect(row, color=(0.82, 0.84, 0.86), fill=(1, 1, 1), width=0.7)
+            page.draw_rect(fitz.Rect(row.x0, row.y0, row.x0 + 62, row.y1), color=None, fill=(0.94, 0.96, 0.98))
+            page.insert_textbox(
+                fitz.Rect(row.x0 + 6, row.y0 + 5, row.x0 + 58, row.y1 - 4),
+                f"第{block.page}页\n{block.id}",
+                fontsize=7,
+                color=(0.0, 0.23, 0.48),
+                overlay=True,
+                **kwargs,
+            )
+            page.insert_textbox(
+                fitz.Rect(row.x0 + 68, row.y0 + 4, row.x0 + 350, row.y1 - 4),
+                f"原文：{block.original}",
+                fontsize=7,
+                color=(0.1, 0.14, 0.2),
+                overlay=True,
+                **kwargs,
+            )
+            page.insert_textbox(
+                fitz.Rect(row.x0 + 356, row.y0 + 4, row.x1 - 8, row.y1 - 4),
+                f"译文：{translation}\n原因：{reason}",
+                fontsize=7,
+                color=(0.1, 0.14, 0.2),
+                overlay=True,
+                **kwargs,
+            )
+            y += row_height
