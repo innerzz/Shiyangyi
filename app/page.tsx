@@ -49,6 +49,15 @@ type AnalyzeResponse = {
   }>;
 };
 
+type StoredTask = {
+  taskId: string;
+  filename: string;
+  provider: string;
+  ocrReady: boolean;
+  pages: PdfPage[];
+  blocks: TranslationBlock[];
+};
+
 const PROCESSING_API_BASE = (process.env.NEXT_PUBLIC_PROCESSING_API_BASE ?? "").replace(/\/$/, "");
 const markerPositions = ["mark-a", "mark-b", "mark-c", "mark-d", "mark-e", "mark-f", "mark-g", "mark-h"];
 const demoPages: PdfPage[] = [
@@ -66,6 +75,38 @@ const initialBlocks: TranslationBlock[] = [
   { id: 7, marker: "G", original: "ブランドネーム", translation: "主标", confidence: 99, status: "confirmed", glossary: true, position: "mark-g" },
   { id: 8, marker: "H", original: "裾〜12cm", translation: "距下摆12cm", confidence: 97, status: "confirmed", glossary: true, position: "mark-h" },
 ];
+
+function mapAnalyzeBlocks(payload: AnalyzeResponse): TranslationBlock[] {
+  const blocks: TranslationBlock[] = payload.blocks.map((block, index) => ({
+    id: index + 1,
+    backendId: block.id,
+    marker: String(index + 1),
+    original: block.original,
+    translation: block.translation,
+    confidence: Math.round(block.confidence * 100),
+    status: block.status,
+    glossary: block.matched_terms.length > 0,
+    position: markerPositions[index % markerPositions.length],
+    page: block.page,
+    source: block.source,
+    bbox: block.bbox,
+  }));
+  payload.pages.filter((page) => page.extraction === "ocr-required").forEach((page) => {
+    blocks.push({
+      id: blocks.length + 1,
+      marker: `P${page.page}`,
+      original: `第 ${page.page} 页为扫描页面`,
+      translation: "等待日文 OCR 识别后再翻译",
+      confidence: 0,
+      status: "review",
+      glossary: false,
+      position: markerPositions[blocks.length % markerPositions.length],
+      page: page.page,
+      source: "ocr-required",
+    });
+  });
+  return blocks;
+}
 
 const recentTasks = [
   { name: "LKC73104AV オフショルスウェット", pages: 2, progress: "8 / 12", status: "待复核", time: "今天 15:42" },
@@ -97,12 +138,14 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [glossarySearch, setGlossarySearch] = useState("");
   const [taskId, setTaskId] = useState("");
+  const [taskFilename, setTaskFilename] = useState("");
   const [pages, setPages] = useState<PdfPage[]>(demoPages);
   const [activePage, setActivePage] = useState(1);
   const [providerName, setProviderName] = useState("演示数据");
   const [ocrReady, setOcrReady] = useState(false);
   const [processingMode, setProcessingMode] = useState<"demo" | "real">("demo");
   const [exporting, setExporting] = useState(false);
+  const [processingError, setProcessingError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selectedBlock = blocks.find((block) => block.id === selectedId) ?? blocks[0];
@@ -114,6 +157,48 @@ export default function Home() {
     const query = glossarySearch.trim().toLowerCase();
     return glossaryRows.filter((row) => !query || row.some((cell) => cell.toLowerCase().includes(query)));
   }, [glossarySearch]);
+
+  useEffect(() => {
+    const restore = (task: StoredTask) => {
+      setTaskId(task.taskId);
+      setTaskFilename(task.filename);
+      setProviderName(task.provider);
+      setOcrReady(task.ocrReady);
+      setPages(task.pages);
+      setBlocks(task.blocks);
+      setSelectedId(task.blocks.find((block) => block.status === "review")?.id ?? task.blocks[0]?.id ?? 0);
+      setProcessingMode("real");
+    };
+    try {
+      const saved = window.localStorage.getItem("shiyangyi.latestTask");
+      if (saved) {
+        const task = JSON.parse(saved) as StoredTask;
+        if (task.taskId && Array.isArray(task.pages) && Array.isArray(task.blocks)) {
+          restore(task);
+          return;
+        }
+      }
+    } catch {
+      window.localStorage.removeItem("shiyangyi.latestTask");
+    }
+    if (!PROCESSING_API_BASE) return;
+    fetch(`${PROCESSING_API_BASE}/api/tasks/latest`)
+      .then(async (response) => response.ok ? response.json() as Promise<AnalyzeResponse> : null)
+      .then((payload) => {
+        if (!payload) return;
+        const task: StoredTask = {
+          taskId: payload.task_id,
+          filename: payload.filename,
+          provider: payload.provider,
+          ocrReady: payload.ocr_available,
+          pages: payload.pages,
+          blocks: mapAnalyzeBlocks(payload),
+        };
+        restore(task);
+        window.localStorage.setItem("shiyangyi.latestTask", JSON.stringify(task));
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (screen !== "processing") return;
@@ -144,6 +229,7 @@ export default function Home() {
       setToast("请上传 PDF 格式的试样书");
       return;
     }
+    setProcessingError("");
     setFile(nextFile);
   }
 
@@ -162,6 +248,9 @@ export default function Home() {
     setProgress(0);
     setActiveStep(0);
     setTaskId("");
+    setTaskFilename("");
+    setProcessingError("");
+    window.localStorage.removeItem("shiyangyi.latestTask");
     setPages(demoPages);
     setActivePage(1);
     const realMode = Boolean(PROCESSING_API_BASE);
@@ -183,49 +272,50 @@ export default function Home() {
       const payload = await response.json() as AnalyzeResponse | { detail?: string };
       if (!response.ok || !("blocks" in payload)) throw new Error("detail" in payload ? (payload.detail ?? "处理服务返回异常") : "处理服务返回异常");
 
-      const realBlocks: TranslationBlock[] = payload.blocks.map((block, index) => ({
-        id: index + 1,
-        backendId: block.id,
-        marker: String(index + 1),
-        original: block.original,
-        translation: block.translation,
-        confidence: Math.round(block.confidence * 100),
-        status: block.status,
-        glossary: block.matched_terms.length > 0,
-        position: markerPositions[index % markerPositions.length],
-        page: block.page,
-        source: block.source,
-        bbox: block.bbox,
-      }));
-      payload.pages.filter((page) => page.extraction === "ocr-required").forEach((page) => {
-        realBlocks.push({
-          id: realBlocks.length + 1,
-          marker: `P${page.page}`,
-          original: `第 ${page.page} 页为扫描页面`,
-          translation: "等待日文 OCR 识别后再翻译",
-          confidence: 0,
-          status: "review",
-          glossary: false,
-          position: markerPositions[realBlocks.length % markerPositions.length],
-          page: page.page,
-          source: "ocr-required",
-        });
-      });
-      setBlocks(realBlocks.length ? realBlocks : initialBlocks);
-      setSelectedId(realBlocks.find((block) => block.status === "review")?.id ?? realBlocks[0]?.id ?? 1);
+      const realBlocks = mapAnalyzeBlocks(payload);
+      setBlocks(realBlocks);
+      setSelectedId(realBlocks.find((block) => block.status === "review")?.id ?? realBlocks[0]?.id ?? 0);
       setTaskId(payload.task_id);
+      setTaskFilename(payload.filename);
       setPages(payload.pages);
       setActivePage(1);
       setProviderName(payload.provider);
       setOcrReady(payload.ocr_available);
       setProgress(100);
       setActiveStep(3);
+      window.localStorage.setItem("shiyangyi.latestTask", JSON.stringify({
+        taskId: payload.task_id,
+        filename: payload.filename,
+        provider: payload.provider,
+        ocrReady: payload.ocr_available,
+        pages: payload.pages,
+        blocks: realBlocks,
+      } satisfies StoredTask));
       window.setTimeout(() => setScreen("review"), 450);
     } catch (error) {
-      setToast(`真实处理服务暂不可用，已切换演示模式：${error instanceof Error ? error.message : "未知错误"}`);
-      setProcessingMode("demo");
+      const message = error instanceof Error ? error.message : "未知错误";
+      setProcessingError(`真实PDF处理失败：${message}`);
+      setToast("真实PDF处理失败，请查看上传页错误说明");
+      setBlocks([]);
+      setPages([]);
+      setProviderName("处理失败");
+      setProcessingMode("real");
       setProgress(0);
+      setScreen("dashboard");
     }
+  }
+
+  function openTranslationTask() {
+    if (taskId) {
+      setScreen("review");
+      return;
+    }
+    if (PROCESSING_API_BASE) {
+      setScreen("dashboard");
+      setToast("请先上传PDF；真实任务完成后会自动进入审校页");
+      return;
+    }
+    setScreen("review");
   }
 
   function updateTranslation(value: string) {
@@ -319,7 +409,7 @@ export default function Home() {
           <button onClick={() => setToast("审批模块将在管理版中开放")}>审批管理</button>
         </nav>
         <div className="topbar-actions">
-          <span className="environment"><i /> {taskId ? "真实处理已连接" : "安全演示环境"}</span>
+          <span className="environment"><i /> {taskId ? "真实PDF已解析" : PROCESSING_API_BASE ? "真实处理服务已连接" : "安全演示环境"}</span>
           <button className="user-button" aria-label="用户菜单">常</button>
         </div>
       </header>
@@ -328,7 +418,7 @@ export default function Home() {
         <div className="side-section">
           <span className="side-label">工作区</span>
           <button className={screen === "dashboard" ? "active" : ""} onClick={() => setScreen("dashboard")}><span>▦</span> 工作台</button>
-          <button className={screen === "processing" || screen === "review" ? "active" : ""} onClick={() => setScreen("review")}><span>文</span> 翻译任务 <b>3</b></button>
+          <button className={screen === "processing" || screen === "review" ? "active" : ""} onClick={openTranslationTask}><span>文</span> 翻译任务 {taskId && <b>1</b>}</button>
           <button className={screen === "glossary" ? "active" : ""} onClick={() => setScreen("glossary")}><span>译</span> 术语库</button>
           <button onClick={() => setToast("暂无更多导出记录")}><span>⇩</span> 导出记录</button>
         </div>
@@ -356,12 +446,13 @@ export default function Home() {
             startProcessing={startProcessing}
             openReview={() => setScreen("review")}
             realProcessingAvailable={Boolean(PROCESSING_API_BASE)}
+            processingError={processingError}
           />
         )}
         {screen === "processing" && <Processing progress={progress} activeStep={activeStep} fileName={file?.name ?? "试样书.pdf"} />}
         {screen === "review" && (
           <ReviewWorkspace
-            fileName={taskId ? (file?.name ?? "试样书.pdf") : "演示任务_未处理原PDF.pdf"}
+            fileName={taskId ? (taskFilename || file?.name || "试样书.pdf") : "演示任务_未处理原PDF.pdf"}
             blocks={blocks}
             selectedBlock={selectedBlock}
             selectedId={selectedId}
@@ -413,7 +504,7 @@ export default function Home() {
   );
 }
 
-function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChange, startProcessing, openReview, realProcessingAvailable }: {
+function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChange, startProcessing, openReview, realProcessingAvailable, processingError }: {
   file: File | null;
   dragging: boolean;
   fileInput: React.RefObject<HTMLInputElement | null>;
@@ -423,12 +514,13 @@ function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChang
   startProcessing: () => void;
   openReview: () => void;
   realProcessingAvailable: boolean;
+  processingError: string;
 }) {
   return (
     <>
       <div className="page-heading">
         <div><span className="eyebrow">任务工作台</span><h1>日文试样书翻译</h1><p>上传原始PDF，系统将自动识别、匹配企业术语并生成可审校的中文初稿。</p></div>
-        <button className="ghost-button" onClick={openReview}>查看演示任务</button>
+        <button className="ghost-button" onClick={openReview}>查看界面示例</button>
       </div>
 
       <section className="summary-strip" aria-label="系统摘要">
@@ -439,6 +531,7 @@ function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChang
       </section>
 
       {!realProcessingAvailable && <section className="demo-mode-warning" role="status"><strong>当前是界面演示，不会读取或翻译你上传的PDF</strong><span>请使用“查看演示任务”体验审校流程。正式上传与无损PDF导出需要先连接企业处理服务。</span></section>}
+      {processingError && <section className="demo-mode-warning" role="alert"><strong>没有切换到演示数据</strong><span>{processingError}。请确认PDF未加密、网络可用，然后重试；如仍失败，请保留该文件以便检查。</span></section>}
 
       <section className="upload-card">
         <div className="section-title"><div><span className="step-number">01</span><div><h2>新建翻译任务</h2><p>{realProcessingAvailable ? "目前支持日文服装试样书PDF，单个文件建议不超过100MB。" : "正式处理服务尚未连接，当前只能查看交互界面。"}</p></div></div><span className="secure-note">{realProcessingAvailable ? "文件仅在当前环境处理" : "演示模式"}</span></div>
@@ -471,10 +564,10 @@ function Dashboard({ file, dragging, fileInput, setDragging, onDrop, onFileChang
       </section>
 
       <section className="tasks-section">
-        <div className="section-heading"><div><h2>最近任务</h2><p>继续审校或下载已完成的文件。</p></div><button className="text-button">查看全部任务 →</button></div>
+        <div className="section-heading"><div><h2>界面示例任务</h2><p>以下为功能示例，不是你上传的PDF处理记录。</p></div></div>
         <div className="table-card">
           <table><thead><tr><th>任务名称</th><th>页数</th><th>审核进度</th><th>状态</th><th>最近更新</th><th /></tr></thead>
-            <tbody>{recentTasks.map((task) => <tr key={task.name}><td><strong>{task.name}</strong><small>日文 → 简体中文</small></td><td>{task.pages}页</td><td>{task.progress}</td><td><span className={`status ${task.status === "已完成" ? "success" : task.status === "待复核" ? "warning" : "info"}`}>{task.status}</span></td><td>{task.time}</td><td><button className="row-action" onClick={openReview}>继续处理 →</button></td></tr>)}</tbody>
+            <tbody>{recentTasks.map((task) => <tr key={task.name}><td><strong>{task.name}</strong><small>日文 → 简体中文（示例）</small></td><td>{task.pages}页</td><td>{task.progress}</td><td><span className={`status ${task.status === "已完成" ? "success" : task.status === "待复核" ? "warning" : "info"}`}>{task.status}</span></td><td>{task.time}</td><td><button className="row-action" onClick={openReview}>查看示例 →</button></td></tr>)}</tbody>
           </table>
         </div>
       </section>
@@ -505,7 +598,7 @@ function Processing({ progress, activeStep, fileName }: { progress: number; acti
 function ReviewWorkspace(props: {
   fileName: string;
   blocks: TranslationBlock[];
-  selectedBlock: TranslationBlock;
+  selectedBlock?: TranslationBlock;
   selectedId: number;
   setSelectedId: (id: number) => void;
   filter: "all" | "review" | "confirmed";
@@ -538,7 +631,7 @@ function ReviewWorkspace(props: {
         <div><span className="breadcrumb">翻译任务 / <b>人工审校</b></span><h1>{fileName.replace(/\.pdf$/i, "")}</h1><p>系统已完成初稿，请优先检查标红内容。</p></div>
         <div className="review-actions"><span className="save-state">✓ 所有修改已保存</span><button className="ghost-button">暂存退出</button><button className="primary-button" onClick={openExport}>导出中文版</button></div>
       </div>
-      {!taskId ? <div className="review-provider-warning error"><strong>这是固定演示数据，不是你上传PDF的翻译结果</strong><span>当前站点没有读取原文件，也不会提供正式PDF导出。</span></div> : providerName === "glossary-local" && <div className="review-provider-warning"><strong>当前仅启用企业术语替换，没有接入完整句子翻译服务</strong><span>未命中固定术语的内容会保留原文并进入待复核清单。</span></div>}
+      {!taskId ? <div className="review-provider-warning error"><strong>这是固定演示数据，不是你上传PDF的翻译结果</strong><span>当前站点没有读取原文件，也不会提供正式PDF导出。</span></div> : blocks.length === 0 ? <div className="review-provider-warning error"><strong>真实PDF已解析，但没有检测到可翻译的日文文字块</strong><span>这不是演示数据。请检查页面预览和OCR提示；可能是扫描清晰度、加密PDF或文字已转曲线造成的。</span></div> : providerName === "glossary-local" && <div className="review-provider-warning"><strong>当前仅启用企业术语替换，没有接入完整句子翻译服务</strong><span>未命中固定术语的内容会保留原文并进入待复核清单。</span></div>}
       <section className="review-summary">
         <div><span>任务状态</span><strong className="warning-text">待复核</strong></div>
         <div><span>页面</span><strong>{activePage} / {pages.length}</strong></div>
@@ -590,13 +683,13 @@ function ReviewWorkspace(props: {
           <div className="panel-header"><div><h2>文字块审校</h2><p>正在检查第 {activePage} 页</p></div><span>{pagePending} 待确认</span></div>
           <div className="filter-tabs"><button className={filter === "review" ? "active" : ""} onClick={() => setFilter("review")}>待确认 <b>{pagePending}</b></button><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>本页全部</button><button className={filter === "confirmed" ? "active" : ""} onClick={() => setFilter("confirmed")}>已确认</button></div>
           <div className="block-list">{currentFilteredBlocks.length ? currentFilteredBlocks.map((block) => <button key={block.id} className={`${selectedId === block.id ? "selected" : ""} ${block.status}`} onClick={() => setSelectedId(block.id)}><span className="block-marker">{block.marker}</span><div><strong>{block.original}</strong><small>{block.translation}</small></div><em>{block.confidence}%</em></button>) : <div className="empty-blocks">本页没有符合当前筛选条件的文字块</div>}</div>
-          <div className="editor-card">
+          {selectedBlock ? <div className="editor-card">
             <div className="editor-meta"><span className={`confidence ${selectedBlock.confidence < 80 ? "low" : ""}`}>识别置信度 {selectedBlock.confidence}%</span>{selectedBlock.glossary && <span className="glossary-hit">已命中术语</span>}</div>
             <label>日文原文<textarea value={selectedBlock.original} readOnly /></label>
             <label>中文译文<textarea value={selectedBlock.translation} onChange={(event) => updateTranslation(event.target.value)} /></label>
             <div className="editor-links"><button onClick={addToGlossary}>＋ 加入术语候选</button><button onClick={() => setBlockStatus("kept")}>保留原文</button></div>
             <button className="confirm-button" onClick={() => setBlockStatus("confirmed")}>✓ 确认当前译文</button>
-          </div>
+          </div> : <div className="editor-card"><div className="empty-blocks">本任务没有可编辑的文字块，请根据页面OCR提示调整原文件后重试。</div></div>}
         </div>
       </section>
     </div>

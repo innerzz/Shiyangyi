@@ -46,6 +46,10 @@ test("keeps the replaceable translation and real PDF integration points", async 
   assert.match(page, /pdf-coordinate-marker/);
   assert.match(page, /\/export/);
   assert.match(page, /待复核/);
+  assert.match(page, /没有切换到演示数据/);
+  assert.match(page, /shiyangyi\.latestTask/);
+  assert.match(page, /\/api\/tasks\/latest/);
+  assert.doesNotMatch(page, /setBlocks\(realBlocks\.length \? realBlocks : initialBlocks\)/);
   assert.match(contract, /interface TranslationProvider/);
   assert.match(route, /demo-standard-provider/);
 });

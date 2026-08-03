@@ -68,6 +68,19 @@ def health():
     }
 
 
+@app.get("/api/tasks/latest", response_model=AnalyzeResponse)
+def latest_task():
+    candidates = sorted(
+        (path for path in TASK_ROOT.iterdir() if path.is_dir() and (path / "task.json").is_file()),
+        key=lambda path: (path / "task.json").stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        raise HTTPException(status_code=404, detail="暂无可恢复的真实任务")
+    payload = json.loads((candidates[0] / "task.json").read_text(encoding="utf-8"))
+    return AnalyzeResponse.model_validate(payload)
+
+
 @app.post("/api/tasks/analyze", response_model=AnalyzeResponse)
 def create_task(
     pdf: UploadFile = File(...),
